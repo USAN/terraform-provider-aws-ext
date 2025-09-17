@@ -8,11 +8,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/connect"
 	conntypes "github.com/aws/aws-sdk-go-v2/service/connect/types"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/int32validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int32default"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -39,6 +41,7 @@ type AgentStatusResourceModel struct {
 	InstanceID    types.String `tfsdk:"instance_id"`
 	Name          types.String `tfsdk:"name"`
 	State         types.String `tfsdk:"state"`
+	DisplayOrder  types.Int32  `tfsdk:"display_order"`
 	// Tags          types.Map    `tfsdk:"tags"`
 	// TagsAll       types.Map    `tfsdk:"tags_all"`
 }
@@ -105,6 +108,14 @@ func (r *AgentStatusResource) Schema(ctx context.Context, req resource.SchemaReq
 					stringvalidator.OneOf("ENABLED", "DISABLED"),
 				},
 			},
+			"display_order": schema.Int32Attribute{
+				Optional: true,
+				Computed: true,
+				Default:  int32default.StaticInt32(1),
+				Validators: []validator.Int32{
+					int32validator.Between(1, 50),
+				},
+			},
 			// "tags": schema.MapAttribute{
 			// 	Optional: true,
 			// 	Elem:     &schema.Schema{Type: schema.TypeString},
@@ -150,10 +161,11 @@ func (r *AgentStatusResource) Create(ctx context.Context, req resource.CreateReq
 
 	conn := connect.NewFromConfig(r.config)
 	input := &connect.CreateAgentStatusInput{
-		InstanceId:  aws.String(data.InstanceID.ValueString()),
-		Name:        aws.String(data.Name.ValueString()),
-		State:       conntypes.AgentStatusState(data.State.ValueString()),
-		Description: aws.String(data.Description.ValueString()),
+		InstanceId:   aws.String(data.InstanceID.ValueString()),
+		Name:         aws.String(data.Name.ValueString()),
+		State:        conntypes.AgentStatusState(data.State.ValueString()),
+		Description:  aws.String(data.Description.ValueString()),
+		DisplayOrder: data.DisplayOrder.ValueInt32Pointer(),
 	}
 
 	response, err := conn.CreateAgentStatus(ctx, input)
@@ -219,6 +231,7 @@ func (r *AgentStatusResource) Read(ctx context.Context, req resource.ReadRequest
 	data.Description = types.StringValue(aws.ToString(response.AgentStatus.Description))
 	data.Name = types.StringValue(aws.ToString(response.AgentStatus.Name))
 	data.State = types.StringValue(string(response.AgentStatus.State))
+	data.DisplayOrder = types.Int32Value(aws.ToInt32(response.AgentStatus.DisplayOrder))
 	// data.Tags = types.MapValueFrom(context.Background(), types.StringType, response.AgentStatus.Tags)
 	// data.TagsAll = types.MapValueFrom(context.Background
 
@@ -243,6 +256,7 @@ func (r *AgentStatusResource) Update(ctx context.Context, req resource.UpdateReq
 		Name:          aws.String(data.Name.ValueString()),
 		State:         conntypes.AgentStatusState(data.State.ValueString()),
 		Description:   aws.String(data.Description.ValueString()),
+		DisplayOrder:  data.DisplayOrder.ValueInt32Pointer(),
 	}
 
 	_, err := conn.UpdateAgentStatus(ctx, input)
