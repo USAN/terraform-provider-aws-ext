@@ -45,7 +45,7 @@ type AwsExtProviderModel struct {
 }
 
 func (p *AwsExtProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
-	resp.TypeName = "Aws-Ext"
+	resp.TypeName = "awsext"
 	resp.Version = p.version
 }
 

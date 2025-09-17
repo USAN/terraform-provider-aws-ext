@@ -8,7 +8,7 @@ import (
 	"flag"
 	"log"
 
-	"github.com/USAN/terraform-provider-aws-ext/provider"
+	"github.com/USAN/terraform-provider-awsext/provider"
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 )
 
