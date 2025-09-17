@@ -11,7 +11,11 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -25,7 +29,7 @@ func NewAgentStatusResource() resource.Resource {
 }
 
 type AgentStatusResource struct {
-	config *aws.Config
+	config aws.Config
 }
 
 type AgentStatusResourceModel struct {
@@ -39,8 +43,26 @@ type AgentStatusResourceModel struct {
 	// TagsAll       types.Map    `tfsdk:"tags_all"`
 }
 
+type AgentStatusResourceIdentityModel struct {
+	Arn           types.String `tfsdk:"arn"`
+	AgentStatusID types.String `tfsdk:"agent_status_id"`
+}
+
 func (r *AgentStatusResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_connect_agent_status"
+}
+
+func (r *AgentStatusResource) IdentitySchema(ctx context.Context, req resource.IdentitySchemaRequest, resp *resource.IdentitySchemaResponse) {
+	resp.IdentitySchema = identityschema.Schema{
+		Attributes: map[string]identityschema.Attribute{
+			"arn": identityschema.StringAttribute{
+				OptionalForImport: true,
+			},
+			"agent_status_id": identityschema.StringAttribute{
+				RequiredForImport: true,
+			},
+		},
+	}
 }
 
 func (r *AgentStatusResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
@@ -50,15 +72,23 @@ func (r *AgentStatusResource) Schema(ctx context.Context, req resource.SchemaReq
 		Attributes: map[string]schema.Attribute{
 			"arn": schema.StringAttribute{
 				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"description": schema.StringAttribute{
 				Optional: true,
+				Computed: true,
+				Default:  stringdefault.StaticString(""),
 				Validators: []validator.String{
 					stringvalidator.LengthBetween(1, 250),
 				},
 			},
 			"agent_status_id": schema.StringAttribute{
 				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"instance_id": schema.StringAttribute{
 				Required: true,
@@ -94,7 +124,7 @@ func (r *AgentStatusResource) Configure(ctx context.Context, req resource.Config
 		return
 	}
 
-	config, ok := req.ProviderData.(*aws.Config)
+	config, ok := req.ProviderData.(aws.Config)
 
 	if !ok {
 		resp.Diagnostics.AddError(
@@ -118,7 +148,7 @@ func (r *AgentStatusResource) Create(ctx context.Context, req resource.CreateReq
 		return
 	}
 
-	conn := connect.NewFromConfig(*r.config)
+	conn := connect.NewFromConfig(r.config)
 	input := &connect.CreateAgentStatusInput{
 		InstanceId:  aws.String(data.InstanceID.ValueString()),
 		Name:        aws.String(data.Name.ValueString()),
@@ -140,6 +170,14 @@ func (r *AgentStatusResource) Create(ctx context.Context, req resource.CreateReq
 
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+
+	identity := AgentStatusResourceIdentityModel{
+		Arn:           data.Arn,
+		AgentStatusID: data.AgentStatusID,
+	}
+
+	// Save identity data into Terraform state
+	resp.Diagnostics.Append(resp.Identity.Set(ctx, identity)...)
 }
 
 func (r *AgentStatusResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -152,7 +190,13 @@ func (r *AgentStatusResource) Read(ctx context.Context, req resource.ReadRequest
 		return
 	}
 
-	conn := connect.NewFromConfig(*r.config)
+	var identity AgentStatusResourceIdentityModel
+	resp.Diagnostics.Append(req.Identity.Get(ctx, &identity)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	conn := connect.NewFromConfig(r.config)
 	input := &connect.DescribeAgentStatusInput{
 		AgentStatusId: aws.String(data.AgentStatusID.ValueString()),
 		InstanceId:    aws.String(data.InstanceID.ValueString()),
@@ -192,7 +236,7 @@ func (r *AgentStatusResource) Update(ctx context.Context, req resource.UpdateReq
 		return
 	}
 
-	conn := connect.NewFromConfig(*r.config)
+	conn := connect.NewFromConfig(r.config)
 	input := &connect.UpdateAgentStatusInput{
 		AgentStatusId: aws.String(data.AgentStatusID.ValueString()),
 		InstanceId:    aws.String(data.InstanceID.ValueString()),
@@ -223,7 +267,7 @@ func (r *AgentStatusResource) Delete(ctx context.Context, req resource.DeleteReq
 	}
 
 	// Unsupported by the API
-	// conn := connect.NewFromConfig(*r.config)
+	// conn := connect.NewFromConfig(r.config)
 	// input := &connect.DeleteAgentStatusInput{
 	// 	AgentStatusId: aws.String(data.AgentStatusID.ValueString()),
 	// 	InstanceId:    aws.String(data.InstanceID.ValueString()),
