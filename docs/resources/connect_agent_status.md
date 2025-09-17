@@ -33,6 +33,7 @@ resource "awsext_connect_agent_status" "example" {
 ### Optional
 
 - `description` (String)
+- `display_order` (Number)
 
 ### Read-Only
 
