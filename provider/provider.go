@@ -66,7 +66,7 @@ func (p *AwsExtProvider) Schema(ctx context.Context, req provider.SchemaRequest,
 			},
 			"region": schema.StringAttribute{
 				Description: "AWS region",
-				Required:    true,
+				Optional:    true,
 			},
 			"profile": schema.StringAttribute{
 				Description: "AWS profile",
@@ -92,6 +92,8 @@ func (p *AwsExtProvider) Configure(ctx context.Context, req provider.ConfigureRe
 	addendums := []func(*config.LoadOptions) error{}
 	if data.AccessKey.ValueString() != "" && data.SecretKey.ValueString() != "" {
 		addendums = append(addendums, config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(data.AccessKey.ValueString(), data.SecretKey.ValueString(), data.Token.ValueString())))
+	} else if data.Profile.ValueString() != "" {
+		addendums = append(addendums, config.WithSharedConfigProfile(data.Profile.ValueString()))
 	}
 
 	if data.Region.ValueString() != "" {
