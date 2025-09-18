@@ -161,11 +161,14 @@ func (r *AgentStatusResource) Create(ctx context.Context, req resource.CreateReq
 
 	conn := connect.NewFromConfig(r.config)
 	input := &connect.CreateAgentStatusInput{
-		InstanceId:   aws.String(data.InstanceID.ValueString()),
-		Name:         aws.String(data.Name.ValueString()),
-		State:        conntypes.AgentStatusState(data.State.ValueString()),
-		Description:  aws.String(data.Description.ValueString()),
-		DisplayOrder: data.DisplayOrder.ValueInt32Pointer(),
+		InstanceId:  aws.String(data.InstanceID.ValueString()),
+		Name:        aws.String(data.Name.ValueString()),
+		State:       conntypes.AgentStatusState(data.State.ValueString()),
+		Description: aws.String(data.Description.ValueString()),
+	}
+
+	if input.State == conntypes.AgentStatusStateEnabled {
+		input.DisplayOrder = data.DisplayOrder.ValueInt32Pointer()
 	}
 
 	response, err := conn.CreateAgentStatus(ctx, input)
@@ -231,7 +234,9 @@ func (r *AgentStatusResource) Read(ctx context.Context, req resource.ReadRequest
 	data.Description = types.StringValue(aws.ToString(response.AgentStatus.Description))
 	data.Name = types.StringValue(aws.ToString(response.AgentStatus.Name))
 	data.State = types.StringValue(string(response.AgentStatus.State))
-	data.DisplayOrder = types.Int32Value(aws.ToInt32(response.AgentStatus.DisplayOrder))
+	if response.AgentStatus.State == conntypes.AgentStatusStateEnabled && response.AgentStatus.DisplayOrder != nil {
+		data.DisplayOrder = types.Int32Value(aws.ToInt32(response.AgentStatus.DisplayOrder))
+	}
 	// data.Tags = types.MapValueFrom(context.Background(), types.StringType, response.AgentStatus.Tags)
 	// data.TagsAll = types.MapValueFrom(context.Background
 
@@ -256,7 +261,10 @@ func (r *AgentStatusResource) Update(ctx context.Context, req resource.UpdateReq
 		Name:          aws.String(data.Name.ValueString()),
 		State:         conntypes.AgentStatusState(data.State.ValueString()),
 		Description:   aws.String(data.Description.ValueString()),
-		DisplayOrder:  data.DisplayOrder.ValueInt32Pointer(),
+	}
+
+	if input.State == conntypes.AgentStatusStateEnabled {
+		input.DisplayOrder = data.DisplayOrder.ValueInt32Pointer()
 	}
 
 	_, err := conn.UpdateAgentStatus(ctx, input)
