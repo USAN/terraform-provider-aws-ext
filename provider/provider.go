@@ -107,6 +107,8 @@ func (p *AwsExtProvider) Configure(ctx context.Context, req provider.ConfigureRe
 		return
 	}
 
+	cfg.RetryMode = aws.RetryModeStandard
+
 	if data.RoleArn.ValueString() != "" {
 		stsClient := sts.NewFromConfig(cfg)
 		creds := stscreds.NewAssumeRoleProvider(stsClient, data.RoleArn.ValueString())
