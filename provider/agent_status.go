@@ -35,13 +35,14 @@ type AgentStatusResource struct {
 }
 
 type AgentStatusResourceModel struct {
-	Arn           types.String `tfsdk:"arn"`
-	Description   types.String `tfsdk:"description"`
-	AgentStatusID types.String `tfsdk:"agent_status_id"`
-	InstanceID    types.String `tfsdk:"instance_id"`
-	Name          types.String `tfsdk:"name"`
-	State         types.String `tfsdk:"state"`
-	DisplayOrder  types.Int32  `tfsdk:"display_order"`
+	Arn            types.String `tfsdk:"arn"`
+	Description    types.String `tfsdk:"description"`
+	AgentStatusID  types.String `tfsdk:"agent_status_id"`
+	InstanceID     types.String `tfsdk:"instance_id"`
+	Name           types.String `tfsdk:"name"`
+	State          types.String `tfsdk:"state"`
+	DisplayOrder   types.Int32  `tfsdk:"display_order"`
+	ImportOnExists types.Bool   `tfsdk:"import_on_exists"`
 	// Tags          types.Map    `tfsdk:"tags"`
 	// TagsAll       types.Map    `tfsdk:"tags_all"`
 }
@@ -116,6 +117,12 @@ func (r *AgentStatusResource) Schema(ctx context.Context, req resource.SchemaReq
 					int32validator.Between(1, 50),
 				},
 			},
+			"import_on_exists": schema.BoolAttribute{
+				Optional:    true,
+				WriteOnly:   true,
+				Description: "If the resource already exists, import it to the state instead of erroring.",
+			},
+			// Unsupported by the API
 			// "tags": schema.MapAttribute{
 			// 	Optional: true,
 			// 	Elem:     &schema.Schema{Type: schema.TypeString},
@@ -151,9 +158,11 @@ func (r *AgentStatusResource) Configure(ctx context.Context, req resource.Config
 
 func (r *AgentStatusResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data AgentStatusResourceModel
+	var importOnExists types.Bool
 
 	// Read Terraform plan data into the model
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("import_on_exists"), &importOnExists)...)
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -161,11 +170,63 @@ func (r *AgentStatusResource) Create(ctx context.Context, req resource.CreateReq
 
 	conn := connect.NewFromConfig(r.config)
 	input := &connect.CreateAgentStatusInput{
-		InstanceId:   aws.String(data.InstanceID.ValueString()),
-		Name:         aws.String(data.Name.ValueString()),
-		State:        conntypes.AgentStatusState(data.State.ValueString()),
-		Description:  aws.String(data.Description.ValueString()),
-		DisplayOrder: data.DisplayOrder.ValueInt32Pointer(),
+		InstanceId:  aws.String(data.InstanceID.ValueString()),
+		Name:        aws.String(data.Name.ValueString()),
+		State:       conntypes.AgentStatusState(data.State.ValueString()),
+		Description: aws.String(data.Description.ValueString()),
+	}
+
+	if input.State == conntypes.AgentStatusStateEnabled {
+		input.DisplayOrder = data.DisplayOrder.ValueInt32Pointer()
+	}
+
+	if importOnExists.IsNull() || importOnExists.IsUnknown() || importOnExists.ValueBool() {
+		var nextToken *string
+		nextToken = nil
+		for {
+			listInput := &connect.ListAgentStatusesInput{
+				InstanceId: aws.String(data.InstanceID.ValueString()),
+				NextToken:  nextToken,
+			}
+
+			listResponse, listErr := conn.ListAgentStatuses(ctx, listInput)
+			if listErr != nil {
+				resp.Diagnostics.AddError("Error listing Connect Agent Statuses", fmt.Sprintf("Could not list Connect Agent Statuses, unexpected error: %s", listErr))
+				break
+			}
+
+			for _, status := range listResponse.AgentStatusSummaryList {
+				if aws.ToString(status.Name) == data.Name.ValueString() {
+					data.AgentStatusID = types.StringValue(aws.ToString(status.Id))
+					data.Arn = types.StringValue(aws.ToString(status.Arn))
+					tflog.Info(ctx, fmt.Sprintf("Imported Connect Agent Status with ID %s, updating...", data.AgentStatusID.ValueString()))
+
+					updateErr := updateAgentStatus(ctx, data, conn)
+					if updateErr != nil {
+						resp.Diagnostics.AddError("Error updating Connect Agent Status", fmt.Sprintf("Could not update Connect Agent Status, unexpected error: %s", updateErr))
+					}
+
+					// Save data into Terraform state
+					resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+
+					identity := AgentStatusResourceIdentityModel{
+						Arn:           data.Arn,
+						AgentStatusID: data.AgentStatusID,
+					}
+
+					// Save identity data into Terraform state
+					resp.Diagnostics.Append(resp.Identity.Set(ctx, identity)...)
+
+					return
+				}
+			}
+
+			nextToken = listResponse.NextToken
+
+			if nextToken == nil {
+				break
+			}
+		}
 	}
 
 	response, err := conn.CreateAgentStatus(ctx, input)
@@ -231,7 +292,9 @@ func (r *AgentStatusResource) Read(ctx context.Context, req resource.ReadRequest
 	data.Description = types.StringValue(aws.ToString(response.AgentStatus.Description))
 	data.Name = types.StringValue(aws.ToString(response.AgentStatus.Name))
 	data.State = types.StringValue(string(response.AgentStatus.State))
-	data.DisplayOrder = types.Int32Value(aws.ToInt32(response.AgentStatus.DisplayOrder))
+	if response.AgentStatus.State == conntypes.AgentStatusStateEnabled && response.AgentStatus.DisplayOrder != nil {
+		data.DisplayOrder = types.Int32Value(aws.ToInt32(response.AgentStatus.DisplayOrder))
+	}
 	// data.Tags = types.MapValueFrom(context.Background(), types.StringType, response.AgentStatus.Tags)
 	// data.TagsAll = types.MapValueFrom(context.Background
 
@@ -250,16 +313,7 @@ func (r *AgentStatusResource) Update(ctx context.Context, req resource.UpdateReq
 	}
 
 	conn := connect.NewFromConfig(r.config)
-	input := &connect.UpdateAgentStatusInput{
-		AgentStatusId: aws.String(data.AgentStatusID.ValueString()),
-		InstanceId:    aws.String(data.InstanceID.ValueString()),
-		Name:          aws.String(data.Name.ValueString()),
-		State:         conntypes.AgentStatusState(data.State.ValueString()),
-		Description:   aws.String(data.Description.ValueString()),
-		DisplayOrder:  data.DisplayOrder.ValueInt32Pointer(),
-	}
-
-	_, err := conn.UpdateAgentStatus(ctx, input)
+	err := updateAgentStatus(ctx, data, conn)
 
 	if err != nil {
 		resp.Diagnostics.AddError("Error updating Connect Agent Status", fmt.Sprintf("Could not update Connect Agent Status, unexpected error: %s", err))
@@ -268,6 +322,24 @@ func (r *AgentStatusResource) Update(ctx context.Context, req resource.UpdateReq
 
 	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+func updateAgentStatus(ctx context.Context, data AgentStatusResourceModel, conn *connect.Client) error {
+	input := &connect.UpdateAgentStatusInput{
+		AgentStatusId: aws.String(data.AgentStatusID.ValueString()),
+		InstanceId:    aws.String(data.InstanceID.ValueString()),
+		Name:          aws.String(data.Name.ValueString()),
+		State:         conntypes.AgentStatusState(data.State.ValueString()),
+		Description:   aws.String(data.Description.ValueString()),
+	}
+
+	if input.State == conntypes.AgentStatusStateEnabled {
+		input.DisplayOrder = data.DisplayOrder.ValueInt32Pointer()
+	}
+
+	_, err := conn.UpdateAgentStatus(ctx, input)
+
+	return err
 }
 
 func (r *AgentStatusResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {

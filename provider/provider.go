@@ -5,8 +5,10 @@ package provider
 
 import (
 	"context"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
@@ -99,6 +101,13 @@ func (p *AwsExtProvider) Configure(ctx context.Context, req provider.ConfigureRe
 	if data.Region.ValueString() != "" {
 		addendums = append(addendums, config.WithRegion(data.Region.ValueString()))
 	}
+
+	addendums = append(addendums, config.WithRetryer(func() aws.Retryer {
+		var retryer aws.Retryer
+		retryer = retry.NewStandard()
+		retryer = retry.AddWithMaxAttempts(retryer, 20)
+		return retry.AddWithMaxBackoffDelay(retryer, 10*time.Second)
+	}))
 
 	cfg, err := config.LoadDefaultConfig(context.TODO(), addendums...)
 

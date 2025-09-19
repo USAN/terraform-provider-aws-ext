@@ -32,8 +32,11 @@ resource "awsext_connect_agent_status" "example" {
 
 ### Optional
 
+> **NOTE**: [Write-only arguments](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments) are supported in Terraform 1.11 and later.
+
 - `description` (String)
 - `display_order` (Number)
+- `import_on_exists` (Boolean, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) If the resource already exists, import it to the state instead of erroring.
 
 ### Read-Only
 
